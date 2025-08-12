@@ -1,6 +1,6 @@
 import os
 from typing import List, Dict, Union, Optional, Any
-from openai import OpenAI
+import litellm
 import time
 import logging
 logger = logging.getLogger("ml-master")
@@ -8,7 +8,7 @@ logger = logging.getLogger("ml-master")
 
 class LLM:
     """
-    Encapsulate the VLLM-based LLM class to invoke the self-hosted VLLM model via the OpenAI SDK.
+    Encapsulate the VLLM-based LLM class to invoke the self-hosted VLLM model via LiteLLM.
     """
     
     def __init__(
@@ -41,12 +41,6 @@ class LLM:
         self.stop_tokens = stop_tokens
         self.retry_time = retry_time
         self.delay_time = delay_time
-        
-        # initalize OpenAI client
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
     
     def generate(
         self, 
@@ -66,7 +60,7 @@ class LLM:
             max_tokens: Overrides the default maximum number of tokens
             stop_tokens: Overrides the default stop sequences
             stream: Whether to use streaming output
-            **kwargs: Additional parameters passed to the OpenAI API
+            **kwargs: Additional parameters passed to the LiteLLM API
             
         Returns:
             If stream=False, returns the generated text  
@@ -85,6 +79,8 @@ class LLM:
             "temperature": temp,
             "max_tokens": tokens,
             "stream": stream,
+            "api_base": self.base_url,
+            "api_key": self.api_key,
             **kwargs
         }
         
@@ -95,7 +91,7 @@ class LLM:
         attempt = 0
         while attempt < self.retry_time:
             try:
-                response = self.client.chat.completions.create(**params)
+                response = litellm.completion(**params)
                 
                 if stream:
                     return response
@@ -126,12 +122,10 @@ class LLM:
             temperature: Overrides the default temperature parameter
             max_tokens: Overrides the default maximum number of tokens
             stop_tokens: Overrides the default stop sequences
-            stream: Whether to use streaming output
-            **kwargs: Additional parameters passed to the OpenAI API
+            **kwargs: Additional parameters passed to the LiteLLM API
             
         Returns:
-            If stream=False, returns the generated text  
-            If stream=True, returns the streaming response object
+            Returns the streaming response object
         """
         # use function parameters or default values
         temp = temperature if temperature is not None else self.temperature
@@ -146,6 +140,8 @@ class LLM:
             "temperature": temp,
             "max_tokens": tokens,
             "stream": stream,
+            "api_base": self.base_url,
+            "api_key": self.api_key,
             **kwargs
         }
         
@@ -155,7 +151,7 @@ class LLM:
         attempt = 0
         while attempt < self.retry_time:
             try:
-                response = self.client.chat.completions.create(**params)
+                response = litellm.completion(**params)
                 full_text = ""
                 for chunk in response:
                     if chunk.choices and chunk.choices[0].delta.content is not None:
@@ -188,7 +184,7 @@ class LLM:
             max_tokens: Overrides the default maximum number of tokens
             stop_tokens: Overrides the default stop tokens
             stream: Whether to use streaming output
-            **kwargs: Additional parameters passed to the OpenAI API
+            **kwargs: Additional parameters passed to the LiteLLM API
 
         Returns:
             If stream=False, returns the generated text  
@@ -200,13 +196,18 @@ class LLM:
         tokens = max_tokens if max_tokens is not None else self.max_tokens
         stops = stop_tokens if stop_tokens is not None else self.stop_tokens
         
+        # Convert prompt to messages format for LiteLLM
+        messages = [{"role": "user", "content": prompt}]
+        
         # create request parameters
         params = {
             "model": self.model_name,
-            "prompt": prompt,
+            "messages": messages,
             "temperature": temp,
             "max_tokens": tokens,
             "stream": stream,
+            "api_base": self.base_url,
+            "api_key": self.api_key,
             **kwargs
         }
         
@@ -214,12 +215,12 @@ class LLM:
         if stops is not None:
             params["stop"] = stops
             
-        response = self.client.completions.create(**params)
+        response = litellm.completion(**params)
         
         if stream:
             return response
         
-        return response.choices[0].text
+        return response.choices[0].message.content
     
     def stream_complete(
         self,
@@ -237,12 +238,10 @@ class LLM:
             temperature: Overrides the default temperature parameter
             max_tokens: Overrides the default maximum number of tokens
             stop_tokens: Overrides the default stop tokens
-            stream: Whether to use streaming output
-            **kwargs: Additional parameters passed to the OpenAI API
+            **kwargs: Additional parameters passed to the LiteLLM API
 
         Returns:
-            If stream=False, returns the generated text  
-            If stream=True, returns a streaming response object
+            Returns the full generated text
         """
 
         # use function parameters or default values
@@ -250,13 +249,19 @@ class LLM:
         tokens = max_tokens if max_tokens is not None else self.max_tokens
         stops = stop_tokens if stop_tokens is not None else self.stop_tokens
         stream = True
+        
+        # Convert prompt to messages format for LiteLLM
+        messages = [{"role": "user", "content": prompt}]
+        
         # create request parameters
         params = {
             "model": self.model_name,
-            "prompt": prompt,
+            "messages": messages,
             "temperature": temp,
             "max_tokens": tokens,
             "stream": stream,
+            "api_base": self.base_url,
+            "api_key": self.api_key,
             **kwargs
         }
         
@@ -267,12 +272,12 @@ class LLM:
         attempt = 0
         while attempt < self.retry_time:
             try:
-                response = self.client.completions.create(**params)
+                response = litellm.completion(**params)
                 
                 full_text = ""
                 for chunk in response:
-                    if chunk.choices and chunk.choices[0].text is not None:
-                        full_text += chunk.choices[0].text
+                    if chunk.choices and chunk.choices[0].delta.content is not None:
+                        full_text += chunk.choices[0].delta.content
                 return full_text
             except Exception as e:
                 attempt += 1
@@ -281,4 +286,3 @@ class LLM:
                     logger.error("LLM call retry limit reached, throwing exception")
                     raise e
                 time.sleep(self.delay_time)
-    

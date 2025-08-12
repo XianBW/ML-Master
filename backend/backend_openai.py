@@ -1,4 +1,4 @@
-"""Backend for OpenAI API."""
+"""Backend for LiteLLM API."""
 
 import json
 import logging
@@ -11,30 +11,18 @@ from backend.backend_utils import (
     backoff_create,
 )
 from funcy import notnone, once, select_values
-import openai
+import litellm
 from utils.config_mcts import Config
 
 logger = logging.getLogger("ml-master")
 
-_client: openai.OpenAI = None  # type: ignore
-
-
-OPENAI_TIMEOUT_EXCEPTIONS = (
-    openai.RateLimitError,
-    openai.APIConnectionError,
-    openai.APITimeoutError,
-    openai.InternalServerError,
+LITELLM_TIMEOUT_EXCEPTIONS = (
+    litellm.RateLimitError,
+    litellm.APIConnectionError,
+    litellm.Timeout,
+    litellm.InternalServerError,
 )
 
-
-@once
-def _setup_openai_client(cfg:Config):
-    global _client
-    _client = openai.OpenAI(
-        base_url=cfg.agent.feedback.base_url,
-        api_key=cfg.agent.feedback.api_key,
-        max_retries=0,
-    )
 
 
 def query(
@@ -42,11 +30,10 @@ def query(
     user_message: str | None,
     func_spec: FunctionSpec | None = None,
     convert_system_to_user: bool = False,
-    cfg:Config=None,
+    cfg: Config = None,
     **model_kwargs,
 ) -> tuple[OutputType, float, int, int, dict]:
-    _setup_openai_client(cfg)
-    filtered_kwargs: dict = select_values(notnone, model_kwargs)  # type: ignore
+    filtered_kwargs: dict = select_values(notnone, model_kwargs)
 
     messages = opt_messages_to_list(system_message, user_message, convert_system_to_user=convert_system_to_user)
 
@@ -58,10 +45,13 @@ def query(
     t0 = time.time()
     message_print = messages[0]["content"]
     print(f"\033[31m{message_print}\033[0m")
+    
     completion = backoff_create(
-        _client.chat.completions.create,
-        OPENAI_TIMEOUT_EXCEPTIONS,
+        litellm.completion,
+        LITELLM_TIMEOUT_EXCEPTIONS,
         messages=messages,
+        api_base=cfg.agent.feedback.base_url,
+        api_key=cfg.agent.feedback.api_key,
         **filtered_kwargs,
     )
     req_time = time.time() - t0
