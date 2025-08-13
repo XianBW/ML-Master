@@ -28,7 +28,7 @@ def r1_query(
     }
     
     response = llm.stream_complete(
-        prompt,
+        compile_prompt_to_md(prompt),
         **model_kwargs
     )
     res = response[response.find("</think>")+8:]
